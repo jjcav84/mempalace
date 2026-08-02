@@ -621,6 +621,7 @@ def cmd_mine(args):
                 respect_gitignore=not args.no_gitignore,
                 include_ignored=include_ignored,
                 max_chunks_per_file=getattr(args, "max_chunks_per_file", None),
+                progress=args.progress,
             )
     except MineAlreadyRunning as exc:
         # A live MCP server or another mine is already writing to this
@@ -1586,18 +1587,17 @@ def cmd_compress(args):
         print(f"\n  No drawers found{wing_label}.")
         return
 
-    print(
-        f"\n  Compressing {len(docs)} drawers"
-        + (f" in wing '{args.wing}'" if args.wing else "")
-        + "..."
+    from .progress import ProgressReporter
+
+    progress_reporter = ProgressReporter(
+        total=len(docs), label="Compressing", enabled=args.progress
     )
-    print()
 
     total_original = 0
     total_compressed = 0
     compressed_entries = []
 
-    for doc, meta, doc_id in zip(docs, metas, ids):
+    for i, (doc, meta, doc_id) in enumerate(zip(docs, metas, ids), 1):
         compressed = dialect.compress(doc, metadata=meta)
         stats = dialect.compression_stats(doc, compressed)
 
@@ -1616,6 +1616,10 @@ def cmd_compress(args):
             )
             print(f"    {compressed}")
             print()
+
+        progress_reporter.update(i)
+
+    progress_reporter.finish(f"Compressed {len(docs)} drawers")
 
     # Store compressed versions (unless dry-run)
     if not args.dry_run:
@@ -1876,6 +1880,11 @@ def main():
             f"Windows if you hit ONNX bad_alloc (#1455)."
         ),
     )
+    p_mine.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show a live progress bar while mining (default: off)",
+    )
 
     # sweep
     p_sweep = sub.add_parser(
@@ -1954,6 +1963,11 @@ def main():
     )
     p_compress.add_argument(
         "--config", default=None, help="Entity config JSON (e.g. entities.json)"
+    )
+    p_compress.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show a live progress bar while compressing (default: off)",
     )
 
     # wake-up

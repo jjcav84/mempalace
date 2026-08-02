@@ -1747,6 +1747,7 @@ def mine(
     include_ignored: list = None,
     files: list = None,
     max_chunks_per_file: Optional[int] = None,
+    progress: bool = False,
 ):
     """Mine a project directory into the palace.
 
@@ -1760,6 +1761,8 @@ def mine(
     :func:`_resolve_max_chunks_per_file`). ``None`` defers to
     ``MEMPALACE_MAX_CHUNKS_PER_FILE`` or ``MAX_CHUNKS_PER_FILE``; ``0``
     disables the cap entirely (#1455).
+
+    ``progress`` enables a live progress bar on stderr during the file loop.
     """
     if dry_run:
         return _mine_impl(
@@ -1773,6 +1776,7 @@ def mine(
             include_ignored=include_ignored,
             files=files,
             max_chunks_per_file=max_chunks_per_file,
+            progress=progress,
         )
 
     # MineAlreadyRunning propagates so the CLI can render a clear holder-aware
@@ -1790,6 +1794,7 @@ def mine(
             include_ignored=include_ignored,
             files=files,
             max_chunks_per_file=max_chunks_per_file,
+            progress=progress,
         )
 
 
@@ -1804,6 +1809,7 @@ def _mine_impl(
     include_ignored: list = None,
     files: list = None,
     max_chunks_per_file: Optional[int] = None,
+    progress: bool = False,
 ):
     from .config import MempalaceConfig
 
@@ -1832,6 +1838,7 @@ def _mine_impl(
         )
 
     from .embedding import describe_device
+    from .progress import ProgressReporter
 
     print(f"\n{'=' * 55}")
     print("  MemPalace Mine")
@@ -1865,6 +1872,8 @@ def _mine_impl(
     last_file = None
     room_counts = defaultdict(int)
     effective_chunk_cap = _resolve_max_chunks_per_file(max_chunks_per_file)
+
+    progress_reporter = ProgressReporter(total=len(files), label="Mining", enabled=progress)
 
     try:
         for i, filepath in enumerate(files, 1):
@@ -1907,10 +1916,16 @@ def _mine_impl(
                 total_drawers += drawers
                 room_counts[room] += 1
                 files_mined += 1
-                if not dry_run:
+                if not dry_run and not progress:
                     print(f"  + [{i:4}/{len(files)}] {filepath.name[:50]:50} +{drawers}")
                 if limit > 0 and files_mined >= limit:
                     break
+
+            progress_reporter.update(i, f"{filepath.name[:40]}")
+
+        progress_reporter.finish(
+            f"Done — {files_processed - files_skipped} files, {total_drawers} drawers"
+        )
 
         if not dry_run:
             from .config import MempalaceConfig
