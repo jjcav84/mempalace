@@ -934,7 +934,9 @@ def cmd_search(args):
             palace_path=palace_path,
             wing=args.wing,
             room=args.room,
+            source_file=args.source_file,
             n_results=args.results,
+            json_output=args.json,
         )
     except SearchError:
         sys.exit(1)
@@ -1938,6 +1940,8 @@ def main():
     )
     p_search.add_argument("--wing", default=None, help="Limit to one project")
     p_search.add_argument("--room", default=None, help="Limit to one room")
+    p_search.add_argument("--source-file", default=None, help="Limit to one source file")
+    p_search.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     p_search.add_argument("--results", type=int, default=5, help="Number of results")
 
     # compress

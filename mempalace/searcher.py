@@ -9,6 +9,7 @@ weak closets (regex extraction on narrative content) can only help, never
 hide drawers the direct path would have found.
 """
 
+import json
 import logging
 import math
 import os
@@ -435,7 +436,13 @@ def _hnsw_capacity_diverged(palace_path: str) -> bool:
 
 
 def _print_search_results_bm25_only(
-    query: str, palace_path: str, wing: str, room: str, n_results: int
+    query: str,
+    palace_path: str,
+    wing: str,
+    room: str,
+    n_results: int,
+    source_file: str = None,
+    json_output: bool = False,
 ) -> None:
     """CLI fallback printer for when HNSW divergence fences off vector search.
 
@@ -449,9 +456,32 @@ def _print_search_results_bm25_only(
         palace_path=palace_path,
         wing=wing,
         room=room,
+        source_file=source_file,
         n_results=n_results,
     )
     hits = result.get("results", [])
+
+    if json_output:
+        # Normalize the BM25-only response into the same shape the vector
+        # path emits so callers like staging_watcher can still parse it.
+        out = []
+        for hit in hits:
+            full_source = hit.get("source_path") or hit.get("source_file", "?")
+            out.append(
+                {
+                    "drawer_id": hit.get("_id", "?"),
+                    "source_file": full_source,
+                    "source_file_name": Path(full_source).name,
+                    "wing": hit.get("wing", "?"),
+                    "room": hit.get("room", "?"),
+                    "text": hit.get("text", ""),
+                    "distance": None,
+                    "similarity": None,
+                    "bm25_score": hit.get("bm25_score", 0.0),
+                }
+            )
+        print(json.dumps({"query": query, "results": out}, ensure_ascii=False, indent=2))
+        return
 
     print(
         "\n  NOTICE: vector search disabled — HNSW index has diverged from SQLite.\n"
@@ -464,6 +494,8 @@ def _print_search_results_bm25_only(
         print(f"  Wing: {wing}")
     if room:
         print(f"  Room: {room}")
+    if source_file:
+        print(f"  Source: {source_file}")
     print(f"{'=' * 60}\n")
 
     if not hits:
@@ -488,10 +520,19 @@ def _print_search_results_bm25_only(
     print()
 
 
-def search(query: str, palace_path: str, wing: str = None, room: str = None, n_results: int = 5):
+def search(
+    query: str,
+    palace_path: str,
+    wing: str = None,
+    room: str = None,
+    source_file: str = None,
+    n_results: int = 5,
+    json_output: bool = False,
+):
     """
     Search the palace. Returns verbatim drawer content.
-    Optionally filter by wing (project) or room (aspect).
+    Optionally filter by wing (project), room (aspect), or source_file.
+    With json_output=True, emits a machine-readable JSON array on stdout.
     """
     # Probe a Chroma palace before get_collection(). Opening the client can
     # load native index state, and embedder-identity enforcement may call
@@ -508,7 +549,9 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
         backend_name = None
 
     if backend_name == "chroma" and _hnsw_capacity_diverged(palace_path):
-        return _print_search_results_bm25_only(query, palace_path, wing, room, n_results)
+        return _print_search_results_bm25_only(
+            query, palace_path, wing, room, n_results, source_file, json_output
+        )
 
     col = _open_collection_or_explain(palace_path, opener=get_collection)
     if col is None:
@@ -520,7 +563,7 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
     # creation — their similarity scores will be junk until they run repair.
     _warn_if_legacy_metric(col)
 
-    where = build_where_filter(wing, room)
+    where = build_where_filter(wing, room, source_file)
 
     try:
         kwargs = {
@@ -542,7 +585,10 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
     dists = _first_or_empty(results, "distances")
 
     if not docs:
-        print(f'\n  No results found for: "{query}"')
+        if json_output:
+            print(json.dumps({"query": query, "results": []}, ensure_ascii=False))
+        else:
+            print(f'\n  No results found for: "{query}"')
         return
 
     # Pure-cosine retrieval on the CLI path was missing lexical matches:
@@ -560,12 +606,35 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
     ]
     hits = _hybrid_rank(hits, query, metric=metric)
 
+    if json_output:
+        out = []
+        for hit in hits:
+            meta = hit["metadata"]
+            out.append(
+                {
+                    "drawer_id": meta.get("drawer_id", "?"),
+                    "parent_drawer_id": meta.get("parent_drawer_id"),
+                    "source_file": meta.get("source_file", "?"),
+                    "source_file_name": Path(meta.get("source_file", "?")).name,
+                    "wing": meta.get("wing", "?"),
+                    "room": meta.get("room", "?"),
+                    "text": hit["text"],
+                    "distance": hit["distance"],
+                    "similarity": round(_distance_to_similarity(hit["distance"], metric), 3),
+                    "bm25_score": hit.get("bm25_score", 0.0),
+                }
+            )
+        print(json.dumps({"query": query, "results": out}, ensure_ascii=False, indent=2))
+        return
+
     print(f"\n{'=' * 60}")
     print(f'  Results for: "{query}"')
     if wing:
         print(f"  Wing: {wing}")
     if room:
         print(f"  Room: {room}")
+    if source_file:
+        print(f"  Source: {source_file}")
     print(f"{'=' * 60}\n")
 
     for i, hit in enumerate(hits, 1):
@@ -575,8 +644,13 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
         source = Path(meta.get("source_file", "?")).name
         wing_name = meta.get("wing", "?")
         room_name = meta.get("room", "?")
+        drawer_id = meta.get("drawer_id", "?")
+        parent_drawer_id = meta.get("parent_drawer_id", "?")
 
         print(f"  [{i}] {wing_name} / {room_name}")
+        print(f"      Drawer: {drawer_id}")
+        if parent_drawer_id and parent_drawer_id != drawer_id:
+            print(f"      Parent drawer: {parent_drawer_id}")
         print(f"      Source: {source}")
         print(f"      Match:  {metric}_sim={vec_sim}  bm25={bm25}")
         print()
