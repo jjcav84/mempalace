@@ -288,7 +288,7 @@ def _cli_ranked_hits(
     docs = _first_or_empty(results, "documents")
     metas = _first_or_empty(results, "metadatas")
     dists = _first_or_empty(results, "distances")
-    ids = _first_or_empty(results, "ids")
+    ids = _first_or_empty(results, "ids") or [None] * len(docs)
     fetched = len(docs)
     if window is not None:
         # Keep the whole in-window pool: the hybrid re-rank must see every
