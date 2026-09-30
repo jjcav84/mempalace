@@ -134,6 +134,7 @@ def test_cmd_search_calls_search(mock_config_cls):
         source_file=None,
         json=False,
         before=None,
+        expand_wings=True,
     )
     with patch("mempalace.searcher.search") as mock_search:
         cmd_search(args)
@@ -147,6 +148,7 @@ def test_cmd_search_calls_search(mock_config_cls):
             since="2026-04-01",
             before=None,
             json_output=False,
+            expand_wings=True,
         )
 
 
@@ -154,7 +156,14 @@ def test_cmd_search_calls_search(mock_config_cls):
 def test_cmd_search_error_exits(mock_config_cls):
     mock_config_cls.return_value.palace_path = "/fake/palace"
     args = argparse.Namespace(
-        palace=None, query="q", wing=None, room=None, results=5, since=None, before=None
+        palace=None,
+        query="q",
+        wing=None,
+        room=None,
+        results=5,
+        since=None,
+        before=None,
+        expand_wings=True,
     )
     from mempalace.searcher import SearchError
 

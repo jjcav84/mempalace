@@ -21,6 +21,7 @@ def cmd_search(args):
             since=args.since,
             before=args.before,
             json_output=getattr(args, "json", False),
+            expand_wings=getattr(args, "expand_wings", False),
         )
     except SearchError:
         sys.exit(1)
