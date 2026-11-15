@@ -678,16 +678,17 @@ _taxonomy_cache = None
 _taxonomy_cache_time = 0.0
 _TAXONOMY_CACHE_TTL = 5.0  # seconds — same idea as the palace-graph cache
 _graph_rows_cache = None
-# tool_status pays O(collection) SQL on non-chroma backends (count + wing/room
-# facet scans). On a six-figure-drawer palace that is tens of seconds per call,
-# and the wake-up protocol calls it on every session start. Cache the whole
-# payload; writes drop it via _invalidate_overview_caches().
-_status_payload_cache = None
-_status_payload_cache_time = 0.0
+# Overview tools (status, list_wings, list_rooms, get_taxonomy) all pay
+# O(collection) SQL on non-chroma backends — count(*) plus wing/room facet
+# scans, and get_taxonomy fires one room-facet query per wing. On a
+# six-figure-drawer palace that is tens of seconds per call, and agents hit
+# these on every wake-up. Cache each tool's payload; writes drop the whole
+# map via _invalidate_overview_caches().
+_overview_payload_cache = {}
 try:
-    _STATUS_CACHE_TTL = float(os.environ.get("MEMPALACE_STATUS_CACHE_TTL", "120"))
+    _OVERVIEW_CACHE_TTL = float(os.environ.get("MEMPALACE_OVERVIEW_CACHE_TTL", "120"))
 except (TypeError, ValueError):
-    _STATUS_CACHE_TTL = 120.0
+    _OVERVIEW_CACHE_TTL = 120.0
 _MAX_RESULTS = 100  # upper bound for search/list limit params
 _DIARY_READ_PAGE_SIZE = 1000
 
@@ -695,34 +696,30 @@ _DIARY_READ_PAGE_SIZE = 1000
 def _invalidate_overview_caches():
     """Drop status/list_wings taxonomy and metadata page caches after writes."""
     global _metadata_cache, _metadata_cache_time, _taxonomy_cache, _taxonomy_cache_time
-    global _graph_rows_cache, _status_payload_cache, _status_payload_cache_time
+    global _graph_rows_cache
     _metadata_cache = None
     _metadata_cache_time = 0
     _taxonomy_cache = None
     _taxonomy_cache_time = 0.0
     _graph_rows_cache = None
-    _status_payload_cache = None
-    _status_payload_cache_time = 0.0
+    _overview_payload_cache.clear()
 
 
-def _cached_status_payload():
-    """Return the cached tool_status payload while it is fresh, else None."""
-    if (
-        _STATUS_CACHE_TTL > 0
-        and _status_payload_cache is not None
-        and (time.time() - _status_payload_cache_time) < _STATUS_CACHE_TTL
-    ):
-        return _status_payload_cache
+def _cached_overview_payload(key):
+    """Return the cached payload for an overview tool while it is fresh."""
+    if _OVERVIEW_CACHE_TTL <= 0:
+        return None
+    entry = _overview_payload_cache.get(key)
+    if entry is not None and (time.time() - entry[0]) < _OVERVIEW_CACHE_TTL:
+        return entry[1]
     return None
 
 
-def _store_status_payload(payload) -> None:
-    """Cache a successful tool_status payload for _STATUS_CACHE_TTL seconds."""
-    global _status_payload_cache, _status_payload_cache_time
-    if _STATUS_CACHE_TTL <= 0:
+def _store_overview_payload(key, payload) -> None:
+    """Cache a successful overview-tool payload for _OVERVIEW_CACHE_TTL seconds."""
+    if _OVERVIEW_CACHE_TTL <= 0:
         return
-    _status_payload_cache = payload
-    _status_payload_cache_time = time.time()
+    _overview_payload_cache[key] = (time.time(), payload)
 
 
 def _palace_db_fingerprint():

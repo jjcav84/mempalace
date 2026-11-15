@@ -473,6 +473,42 @@ with mine_palace_lock(sys.argv[1]):
         mcp_server.tool_status()
         assert len(calls) == 2
 
+    def test_overview_tools_share_cache_map(
+        self, monkeypatch, config, palace_path, seeded_collection, kg
+    ):
+        """list_wings/list_rooms/get_taxonomy pay the same O(collection) SQL
+        as status on non-chroma backends — each caches under its own key and
+        list_rooms keys by wing argument."""
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        wings_calls = []
+        real_wings = mcp_server._tool_list_wings_uncached
+
+        def counting_wings():
+            wings_calls.append(1)
+            return real_wings()
+
+        monkeypatch.setattr(mcp_server, "_tool_list_wings_uncached", counting_wings)
+        mcp_server.tool_list_wings()
+        mcp_server.tool_list_wings()
+        assert len(wings_calls) == 1
+
+        rooms_calls = []
+        real_rooms = mcp_server._tool_list_rooms_uncached
+
+        def counting_rooms(wing=None):
+            rooms_calls.append(wing)
+            return real_rooms(wing)
+
+        monkeypatch.setattr(mcp_server, "_tool_list_rooms_uncached", counting_rooms)
+        mcp_server.tool_list_rooms()
+        mcp_server.tool_list_rooms()
+        mcp_server.tool_list_rooms(wing="project")
+        mcp_server.tool_list_rooms(wing="project")
+        # unfiltered cached once, "project" cached once — two computes total
+        assert len(rooms_calls) == 2
+
     def test_list_wings(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace.mcp_server import tool_list_wings

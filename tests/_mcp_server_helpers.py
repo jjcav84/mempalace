@@ -40,8 +40,7 @@ def _patch_mcp_server(monkeypatch, config, kg):
     monkeypatch.setattr(mcp_server, "_taxonomy_cache", None)
     monkeypatch.setattr(mcp_server, "_taxonomy_cache_time", 0.0)
     monkeypatch.setattr(mcp_server, "_graph_rows_cache", None)
-    monkeypatch.setattr(mcp_server, "_status_payload_cache", None)
-    monkeypatch.setattr(mcp_server, "_status_payload_cache_time", 0.0)
+    monkeypatch.setattr(mcp_server, "_overview_payload_cache", {})
     from mempalace.palace_graph import invalidate_graph_cache
 
     invalidate_graph_cache()

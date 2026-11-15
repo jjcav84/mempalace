@@ -321,16 +321,23 @@ def _tally_wings_rooms(all_meta, wings=None, rooms=None, taxonomy=None) -> int:
     return total
 
 
-def tool_status():
-    cached = _cached_status_payload()
+def _overview_tool(key, compute):
+    """Serve an overview tool from the TTL cache, computing on miss.
+
+    Error/partial payloads are not cached: a transient backend failure
+    should be retried promptly rather than pinned for the whole TTL.
+    """
+    cached = _cached_overview_payload(key)
     if cached is not None:
         return cached
-    payload = _tool_status_uncached()
-    # Error/partial payloads are not cached: a transient backend failure
-    # should be retried promptly rather than pinned for the whole TTL.
+    payload = compute()
     if isinstance(payload, dict) and not payload.get("error"):
-        _store_status_payload(payload)
+        _store_overview_payload(key, payload)
     return payload
+
+
+def tool_status():
+    return _overview_tool("status", _tool_status_uncached)
 
 
 def _tool_status_uncached():
@@ -470,6 +477,10 @@ When WRITING AAAK: use entity codes, mark emotions, keep structure tight."""
 
 
 def tool_list_wings():
+    return _overview_tool("list_wings", _tool_list_wings_uncached)
+
+
+def _tool_list_wings_uncached():
     fast = _sqlite_taxonomy()
     if fast is not None:
         _total, wing_rooms = fast
@@ -510,6 +521,10 @@ def tool_list_wings():
 
 
 def tool_list_rooms(wing: str = None):
+    return _overview_tool(f"list_rooms:{wing or ''}", lambda: _tool_list_rooms_uncached(wing))
+
+
+def _tool_list_rooms_uncached(wing: str = None):
     try:
         wing = _sanitize_optional_name(wing, "wing")
     except ValueError as e:
@@ -565,6 +580,10 @@ def tool_list_rooms(wing: str = None):
 
 
 def tool_get_taxonomy():
+    return _overview_tool("get_taxonomy", _tool_get_taxonomy_uncached)
+
+
+def _tool_get_taxonomy_uncached():
     fast = _sqlite_taxonomy()
     if fast is not None:
         _total, wing_rooms = fast
