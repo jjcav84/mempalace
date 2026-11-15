@@ -671,6 +671,15 @@ def _supports_metadata_facets(col) -> bool:
     return isinstance(capabilities, (set, frozenset)) and "supports_metadata_facets" in capabilities
 
 
+def _supports_joint_facets(col) -> bool:
+    """Return True if the collection's backend implements joint facet counts."""
+    backend = getattr(col, "_backend", None)
+    if backend is None:
+        return False
+    capabilities = getattr(backend, "capabilities", None)
+    return isinstance(capabilities, (set, frozenset)) and "supports_joint_facets" in capabilities
+
+
 _metadata_cache = None
 _metadata_cache_time = 0
 _METADATA_CACHE_TTL = 5.0  # seconds

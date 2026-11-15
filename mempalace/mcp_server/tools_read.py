@@ -597,26 +597,36 @@ def _tool_get_taxonomy_uncached():
         try:
             if not _supports_metadata_facets(col):
                 raise ValueError("facets not supported")
-            from concurrent.futures import ThreadPoolExecutor
-
             wing_counts = col.facet_counts("wing")
-            wings = list(wing_counts.keys())
             temp_taxonomy = {}
-            with ThreadPoolExecutor(max_workers=max(1, min(8, len(wings)))) as executor:
-                futures = {
-                    wing: executor.submit(col.facet_counts, "room", where={"wing": wing})
-                    for wing in wings
-                }
-                for wing, future in futures.items():
-                    room_counts = future.result()
-                    try:
-                        unknown_rooms = wing_counts[wing] - sum(room_counts.values())
-                        if unknown_rooms > 0:
-                            room_counts["unknown"] = room_counts.get("unknown", 0) + unknown_rooms
-                    except (TypeError, ValueError):
-                        pass
-                    temp_taxonomy[wing] = room_counts
-                taxonomy.update(temp_taxonomy)
+            if _supports_joint_facets(col):
+                # One grouped scan for the whole wing→room matrix instead of
+                # a room-facet query per wing — on large pgvector palaces the
+                # fan-out is what made this tool take minutes.
+                pairs = col.joint_facet_counts("wing", "room")
+                for (wing, room), n in pairs.items():
+                    temp_taxonomy.setdefault(wing, {})[room] = n
+                for wing in wing_counts:
+                    temp_taxonomy.setdefault(wing, {})
+            else:
+                from concurrent.futures import ThreadPoolExecutor
+
+                wings = list(wing_counts.keys())
+                with ThreadPoolExecutor(max_workers=max(1, min(8, len(wings)))) as executor:
+                    futures = {
+                        wing: executor.submit(col.facet_counts, "room", where={"wing": wing})
+                        for wing in wings
+                    }
+                    for wing, future in futures.items():
+                        temp_taxonomy[wing] = future.result()
+            for wing, room_counts in temp_taxonomy.items():
+                try:
+                    unknown_rooms = wing_counts.get(wing, 0) - sum(room_counts.values())
+                    if unknown_rooms > 0:
+                        room_counts["unknown"] = room_counts.get("unknown", 0) + unknown_rooms
+                except (TypeError, ValueError):
+                    pass
+            taxonomy.update(temp_taxonomy)
             _drop_bookkeeping_facets(col, taxonomy=taxonomy)
         except Exception as e:
             if _supports_metadata_facets(col):
