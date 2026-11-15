@@ -678,6 +678,16 @@ _taxonomy_cache = None
 _taxonomy_cache_time = 0.0
 _TAXONOMY_CACHE_TTL = 5.0  # seconds — same idea as the palace-graph cache
 _graph_rows_cache = None
+# tool_status pays O(collection) SQL on non-chroma backends (count + wing/room
+# facet scans). On a six-figure-drawer palace that is tens of seconds per call,
+# and the wake-up protocol calls it on every session start. Cache the whole
+# payload; writes drop it via _invalidate_overview_caches().
+_status_payload_cache = None
+_status_payload_cache_time = 0.0
+try:
+    _STATUS_CACHE_TTL = float(os.environ.get("MEMPALACE_STATUS_CACHE_TTL", "120"))
+except (TypeError, ValueError):
+    _STATUS_CACHE_TTL = 120.0
 _MAX_RESULTS = 100  # upper bound for search/list limit params
 _DIARY_READ_PAGE_SIZE = 1000
 
@@ -685,12 +695,34 @@ _DIARY_READ_PAGE_SIZE = 1000
 def _invalidate_overview_caches():
     """Drop status/list_wings taxonomy and metadata page caches after writes."""
     global _metadata_cache, _metadata_cache_time, _taxonomy_cache, _taxonomy_cache_time
-    global _graph_rows_cache
+    global _graph_rows_cache, _status_payload_cache, _status_payload_cache_time
     _metadata_cache = None
     _metadata_cache_time = 0
     _taxonomy_cache = None
     _taxonomy_cache_time = 0.0
     _graph_rows_cache = None
+    _status_payload_cache = None
+    _status_payload_cache_time = 0.0
+
+
+def _cached_status_payload():
+    """Return the cached tool_status payload while it is fresh, else None."""
+    if (
+        _STATUS_CACHE_TTL > 0
+        and _status_payload_cache is not None
+        and (time.time() - _status_payload_cache_time) < _STATUS_CACHE_TTL
+    ):
+        return _status_payload_cache
+    return None
+
+
+def _store_status_payload(payload) -> None:
+    """Cache a successful tool_status payload for _STATUS_CACHE_TTL seconds."""
+    global _status_payload_cache, _status_payload_cache_time
+    if _STATUS_CACHE_TTL <= 0:
+        return
+    _status_payload_cache = payload
+    _status_payload_cache_time = time.time()
 
 
 def _palace_db_fingerprint():

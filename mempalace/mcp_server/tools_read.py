@@ -322,6 +322,18 @@ def _tally_wings_rooms(all_meta, wings=None, rooms=None, taxonomy=None) -> int:
 
 
 def tool_status():
+    cached = _cached_status_payload()
+    if cached is not None:
+        return cached
+    payload = _tool_status_uncached()
+    # Error/partial payloads are not cached: a transient backend failure
+    # should be retried promptly rather than pinned for the whole TTL.
+    if isinstance(payload, dict) and not payload.get("error"):
+        _store_status_payload(payload)
+    return payload
+
+
+def _tool_status_uncached():
     _ensure_sqlite_integrity_status()
     if _sqlite_integrity_errors:
         result = _tool_status_via_sqlite()

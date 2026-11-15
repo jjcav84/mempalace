@@ -413,6 +413,66 @@ with mine_palace_lock(sys.argv[1]):
         assert result["wings"].get("proj") == 1
         assert result["wings"].get("unknown") == 1
 
+    def test_status_payload_cached_within_ttl(
+        self, monkeypatch, config, palace_path, seeded_collection, kg
+    ):
+        """tool_status must not recompute the O(collection) overview on every
+        call — the wake-up protocol calls it per session and on a large
+        pgvector palace each compute is tens of seconds of SQL."""
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        calls = []
+        real = mcp_server._tool_status_uncached
+
+        def counting():
+            calls.append(1)
+            return real()
+
+        monkeypatch.setattr(mcp_server, "_tool_status_uncached", counting)
+        first = mcp_server.tool_status()
+        second = mcp_server.tool_status()
+        assert first == second
+        assert len(calls) == 1
+
+    def test_status_cache_dropped_by_invalidate(
+        self, monkeypatch, config, palace_path, seeded_collection, kg
+    ):
+        """Writes invalidate the status payload so post-write status is fresh."""
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        calls = []
+        real = mcp_server._tool_status_uncached
+
+        def counting():
+            calls.append(1)
+            return real()
+
+        monkeypatch.setattr(mcp_server, "_tool_status_uncached", counting)
+        mcp_server.tool_status()
+        mcp_server._invalidate_overview_caches()
+        mcp_server.tool_status()
+        assert len(calls) == 2
+
+    def test_status_error_payload_not_cached(
+        self, monkeypatch, config, palace_path, seeded_collection, kg
+    ):
+        """A failing status must be retried promptly, not pinned for the TTL."""
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace import mcp_server
+
+        calls = []
+
+        def failing():
+            calls.append(1)
+            return {"error": "backend down"}
+
+        monkeypatch.setattr(mcp_server, "_tool_status_uncached", failing)
+        mcp_server.tool_status()
+        mcp_server.tool_status()
+        assert len(calls) == 2
+
     def test_list_wings(self, monkeypatch, config, palace_path, seeded_collection, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace.mcp_server import tool_list_wings
