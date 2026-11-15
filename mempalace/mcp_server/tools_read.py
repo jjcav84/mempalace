@@ -324,12 +324,31 @@ def _tally_wings_rooms(all_meta, wings=None, rooms=None, taxonomy=None) -> int:
 def _overview_tool(key, compute):
     """Serve an overview tool from the TTL cache, computing on miss.
 
-    Error/partial payloads are not cached: a transient backend failure
-    should be retried promptly rather than pinned for the whole TTL.
+    TTL-expired entries are served stale-while-revalidate: the last good
+    payload returns at once and a background thread refreshes it, because a
+    cold scan can exceed proxy/client timeouts under load. Write-invalidated
+    entries get a bounded wait (_OVERVIEW_POST_WRITE_WAIT) for the refresh
+    so post-write verification reads still see fresh counts, falling back
+    to stale rather than blocking on the full scan. Only a first-ever call
+    — nothing ever computed — pays the synchronous cost. Error/partial
+    payloads are never cached.
     """
     cached = _cached_overview_payload(key)
     if cached is not None:
         return cached
+    entry = _overview_payload_cache.get(key)
+    if entry is not None:
+        _schedule_overview_refresh(key, compute)
+        return entry[1]
+    stale = _stale_overview_payload(key)
+    if stale is not None:
+        event = _schedule_overview_refresh(key, compute)
+        if event is not None and _OVERVIEW_POST_WRITE_WAIT > 0:
+            event.wait(timeout=_OVERVIEW_POST_WRITE_WAIT)
+            fresh = _cached_overview_payload(key)
+            if fresh is not None:
+                return fresh
+        return stale
     payload = compute()
     if isinstance(payload, dict) and not payload.get("error"):
         _store_overview_payload(key, payload)
